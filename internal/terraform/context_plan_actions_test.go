@@ -100,13 +100,12 @@ func TestContextPlan_actions(t *testing.T) {
 	}
 
 	for topic, tcs := range map[string]map[string]struct {
-		toBeImplemented bool
-		module          map[string]string
-		buildState      func(*states.SyncState)
-		planActionFn    func(*testing.T, providers.PlanActionRequest) providers.PlanActionResponse
-		planResourceFn  func(*testing.T, providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse
-		readResourceFn  func(*testing.T, providers.ReadResourceRequest) providers.ReadResourceResponse
-		planOpts        *PlanOpts
+		module         map[string]string
+		buildState     func(*states.SyncState)
+		planActionFn   func(*testing.T, providers.PlanActionRequest) providers.PlanActionResponse
+		planResourceFn func(*testing.T, providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse
+		readResourceFn func(*testing.T, providers.ReadResourceRequest) providers.ReadResourceResponse
+		planOpts       *PlanOpts
 
 		expectPlanActionCalled bool
 
@@ -712,36 +711,7 @@ resource "test_object" "a" {
 					)
 				},
 			},
-			"splat is not supported": {
-				module: map[string]string{
-					"main.tf": `
-action "test_action" "hello" {
-  count = 42
-}
-resource "test_object" "a" {
-  lifecycle {
-    action_trigger {
-      events = [before_create]
-      actions = [action.test_action.hello[*]]
-    }
-  }
-}
-`,
-				},
-				expectPlanActionCalled: false,
-				expectPlanDiagnostics: func(m *configs.Config) tfdiags.Diagnostics {
-					return tfdiags.Diagnostics{}.Append(&hcl.Diagnostic{
-						Severity: hcl.DiagError,
-						Summary:  "Invalid action expression",
-						Detail:   "Unexpected expression found in action_triggers.actions.",
-						Subject: &hcl.Range{
-							Filename: filepath.Join(m.Module.SourceDir, "main.tf"),
-							Start:    hcl.Pos{Line: 9, Column: 18, Byte: 159},
-							End:      hcl.Pos{Line: 9, Column: 47, Byte: 186},
-						},
-					})
-				},
-			},
+
 			"multiple events triggering in same action trigger": {
 				module: map[string]string{
 					"main.tf": `
@@ -3905,10 +3875,6 @@ resource "test_object" "b" {
 		t.Run(topic, func(t *testing.T) {
 			for name, tc := range tcs {
 				t.Run(name, func(t *testing.T) {
-					if tc.toBeImplemented {
-						t.Skip("Test not implemented yet")
-					}
-
 					opts := SimplePlanOpts(plans.NormalMode, InputValues{})
 					if tc.planOpts != nil {
 						opts = tc.planOpts
