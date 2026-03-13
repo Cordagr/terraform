@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/apparentlymart/go-versions/versions"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
@@ -100,7 +101,10 @@ func (cp *Plugins) ProviderSchema(addr addrs.Provider) (providers.ProviderSchema
 	// We skip this if we have preloaded schemas because that suggests that
 	// our caller is not Terraform CLI and therefore it's probably inappropriate
 	// to assume that provider schemas are unique process-wide.
-	schemas, ok := providers.SchemaCache.Get(addr)
+
+	// FIXME: How do we get version information here?
+	v := versions.Version{}
+	schemas, ok := providers.SchemaCache.Get(addr, v)
 	if ok {
 		log.Printf("[TRACE] terraform.contextPlugins: Schema for provider %q is in the global cache", addr)
 		return schemas, nil
