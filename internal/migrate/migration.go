@@ -34,14 +34,17 @@ type Match struct {
 
 // Action describes a single mutation to apply to matched blocks.
 type Action struct {
-	Action   string `json:"action"`
-	From     string `json:"from,omitempty"`
-	To       string `json:"to,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Text     string `json:"text,omitempty"`
-	Value    string `json:"value,omitempty"`
-	OldValue string `json:"old_value,omitempty"`
-	NewValue string `json:"new_value,omitempty"`
+	Action        string `json:"action"`
+	From          string `json:"from,omitempty"`
+	To            string `json:"to,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Text          string `json:"text,omitempty"`
+	Value         string `json:"value,omitempty"`
+	OldValue      string `json:"old_value,omitempty"`
+	NewValue      string `json:"new_value,omitempty"`
+	BlockName     string `json:"block_name,omitempty"`
+	WireAttribute string `json:"wire_attribute,omitempty"`
+	WireTraversal string `json:"wire_traversal,omitempty"`
 }
 
 // ParseMigration parses a JSON migration file.
@@ -75,13 +78,17 @@ func (m *Migration) validate() error {
 }
 
 var validActions = map[string]bool{
-	"rename_attribute":    true,
-	"remove_attribute":    true,
-	"rename_resource":     true,
-	"add_comment":         true,
-	"set_attribute_value": true,
-	"add_attribute":       true,
-	"replace_value":       true,
+	"rename_attribute":       true,
+	"remove_attribute":       true,
+	"rename_resource":        true,
+	"add_comment":            true,
+	"set_attribute_value":    true,
+	"add_attribute":          true,
+	"replace_value":          true,
+	"extract_to_resource":    true,
+	"move_attribute_to_block": true,
+	"flatten_block":          true,
+	"remove_resource":        true,
 }
 
 func (a *Action) validate() error {
@@ -116,6 +123,22 @@ func (a *Action) validate() error {
 	case "replace_value":
 		if a.Name == "" || a.OldValue == "" || a.NewValue == "" {
 			return fmt.Errorf("replace_value requires \"name\", \"old_value\", and \"new_value\"")
+		}
+	case "extract_to_resource":
+		if a.Name == "" || a.To == "" {
+			return fmt.Errorf("extract_to_resource requires \"name\" (nested block) and \"to\" (new resource type)")
+		}
+	case "move_attribute_to_block":
+		if a.Name == "" || a.BlockName == "" || a.To == "" {
+			return fmt.Errorf("move_attribute_to_block requires \"name\", \"block_name\", and \"to\"")
+		}
+	case "flatten_block":
+		if a.Name == "" {
+			return fmt.Errorf("flatten_block requires \"name\"")
+		}
+	case "remove_resource":
+		if a.Text == "" {
+			return fmt.Errorf("remove_resource requires \"text\" (FIXME comment)")
 		}
 	}
 	return nil
@@ -243,6 +266,99 @@ func executeAction(a Action, r *ast.BlockResult, mod *ast.Module) error {
 			}
 			r.Block.SetAttributeRaw(a.Name, tokens)
 		}
+
+	case "extract_to_resource":
+		nested := r.Block.NestedBlocks(a.Name)
+		if len(nested) == 0 {
+			return nil
+		}
+		// Read attributes from the nested block
+		attrs := nested[0].Attributes()
+
+		// Remove the nested block from the parent
+		r.Block.RemoveBlock(a.Name)
+
+		// Create new resource with same instance name
+		labels := r.Block.Labels()
+		if len(labels) < 2 {
+			return fmt.Errorf("extract_to_resource: block needs at least 2 labels")
+		}
+		newBlock := r.File.AddBlock("resource", []string{a.To, labels[1]})
+
+		// Add wiring attribute if specified
+		if a.WireAttribute != "" {
+			suffix := a.WireTraversal
+			if suffix == "" {
+				suffix = "id"
+			}
+			newBlock.SetAttributeTraversal(a.WireAttribute, hcl.Traversal{
+				hcl.TraverseRoot{Name: labels[0]},
+				hcl.TraverseAttr{Name: labels[1]},
+				hcl.TraverseAttr{Name: suffix},
+			})
+		}
+
+		// Copy attributes from the extracted nested block
+		for name, expr := range attrs {
+			newBlock.SetAttributeRaw(name, expr.BuildTokens(nil))
+		}
+
+	case "move_attribute_to_block":
+		expr := r.Block.GetAttributeExpression(a.Name)
+		if expr == nil {
+			return nil
+		}
+		tokens := expr.BuildTokens(nil)
+
+		// Remove from parent
+		r.Block.RemoveAttribute(a.Name)
+
+		// Find or create the target nested block
+		existing := r.Block.NestedBlocks(a.BlockName)
+		var target *ast.Block
+		if len(existing) > 0 {
+			target = existing[0]
+		} else {
+			target = r.Block.AddBlock(a.BlockName)
+		}
+
+		// Set the attribute with the new name
+		target.SetAttributeRaw(a.To, tokens)
+
+	case "flatten_block":
+		nested := r.Block.NestedBlocks(a.Name)
+		if len(nested) == 0 {
+			return nil
+		}
+		// Read all attributes from the nested block
+		attrs := nested[0].Attributes()
+
+		// Remove the nested block
+		r.Block.RemoveBlock(a.Name)
+
+		// Add each attribute to the parent block
+		for name, expr := range attrs {
+			r.Block.SetAttributeRaw(name, expr.BuildTokens(nil))
+		}
+
+	case "remove_resource":
+		labels := r.Block.Labels()
+		if len(labels) == 0 {
+			return fmt.Errorf("remove_resource: block has no labels")
+		}
+
+		// Find files that reference this resource and add FIXME comments
+		prefix := hcl.Traversal{hcl.TraverseRoot{Name: labels[0]}}
+		warned := make(map[string]bool)
+		for _, f := range mod.Files() {
+			if f.ReferencesPrefix(prefix) && !warned[f.Filename()] {
+				f.AppendComment(a.Text)
+				warned[f.Filename()] = true
+			}
+		}
+
+		// Remove the resource block
+		r.File.RemoveBlock(r.Block.Type(), labels)
 
 	default:
 		return fmt.Errorf("unknown action %q", a.Action)

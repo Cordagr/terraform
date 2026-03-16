@@ -360,6 +360,172 @@ func TestExecute_multipleActions(t *testing.T) {
 	}
 }
 
+func TestExecute_extractToResource(t *testing.T) {
+	src := `resource "aws_s3_bucket" "main" {
+  bucket = "my-bucket"
+
+  versioning {
+    enabled = true
+  }
+}
+
+output "bucket_id" {
+  value = aws_s3_bucket.main.id
+}
+`
+	m := &Migration{
+		Name:  "test/extract",
+		Match: Match{BlockType: "resource", Label: "aws_s3_bucket"},
+		Actions: []Action{
+			{Action: "extract_to_resource", Name: "versioning", To: "aws_s3_bucket_versioning", WireAttribute: "bucket", WireTraversal: "id"},
+		},
+	}
+
+	got := executeMigration(t, m, src)
+	if !strings.Contains(got, `resource "aws_s3_bucket_versioning" "main"`) {
+		t.Errorf("expected new resource created, got:\n%s", got)
+	}
+	if !strings.Contains(got, "aws_s3_bucket.main.id") {
+		t.Errorf("expected wiring attribute referencing aws_s3_bucket.main.id, got:\n%s", got)
+	}
+	if !strings.Contains(got, "enabled = true") {
+		t.Errorf("expected copied attribute, got:\n%s", got)
+	}
+	// Versioning block should be removed from original
+	if strings.Contains(got, "versioning {") {
+		t.Errorf("expected versioning block removed from original, got:\n%s", got)
+	}
+}
+
+func TestExecute_moveAttributeToBlock(t *testing.T) {
+	src := `resource "aws_instance" "web" {
+  ami                  = "abc-123"
+  instance_type        = "c5.xlarge"
+  cpu_core_count       = 2
+  cpu_threads_per_core = 1
+}
+`
+	m := &Migration{
+		Name:  "test/move_to_block",
+		Match: Match{BlockType: "resource", Label: "aws_instance"},
+		Actions: []Action{
+			{Action: "move_attribute_to_block", Name: "cpu_core_count", BlockName: "cpu_options", To: "core_count"},
+			{Action: "move_attribute_to_block", Name: "cpu_threads_per_core", BlockName: "cpu_options", To: "threads_per_core"},
+		},
+	}
+
+	got := executeMigration(t, m, src)
+	if strings.Contains(got, "cpu_core_count") {
+		t.Errorf("expected cpu_core_count removed from top level, got:\n%s", got)
+	}
+	if strings.Contains(got, "cpu_threads_per_core") {
+		t.Errorf("expected cpu_threads_per_core removed from top level, got:\n%s", got)
+	}
+	if !strings.Contains(got, "cpu_options {") {
+		t.Errorf("expected cpu_options block created, got:\n%s", got)
+	}
+	if !strings.Contains(got, "core_count") {
+		t.Errorf("expected core_count in nested block, got:\n%s", got)
+	}
+	if !strings.Contains(got, "threads_per_core") {
+		t.Errorf("expected threads_per_core in nested block, got:\n%s", got)
+	}
+}
+
+func TestExecute_flattenBlock(t *testing.T) {
+	src := `resource "aws_elasticache_replication_group" "main" {
+  description = "my cluster"
+
+  cluster_mode {
+    num_node_groups         = 3
+    replicas_per_node_group = 2
+  }
+}
+`
+	m := &Migration{
+		Name:  "test/flatten",
+		Match: Match{BlockType: "resource", Label: "aws_elasticache_replication_group"},
+		Actions: []Action{
+			{Action: "flatten_block", Name: "cluster_mode"},
+		},
+	}
+
+	got := executeMigration(t, m, src)
+	if strings.Contains(got, "cluster_mode") {
+		t.Errorf("expected cluster_mode block removed, got:\n%s", got)
+	}
+	if !strings.Contains(got, "num_node_groups") {
+		t.Errorf("expected num_node_groups at top level, got:\n%s", got)
+	}
+	if !strings.Contains(got, "replicas_per_node_group") {
+		t.Errorf("expected replicas_per_node_group at top level, got:\n%s", got)
+	}
+}
+
+func TestExecute_removeResource(t *testing.T) {
+	files := map[string]string{
+		"main.tf": `resource "aws_opsworks_stack" "main" {
+  name   = "my-stack"
+  region = "us-east-1"
+}
+
+resource "aws_instance" "web" {
+  ami = "abc-123"
+}
+`,
+		"refs.tf": `resource "aws_opsworks_layer" "app" {
+  stack_id = aws_opsworks_stack.main.id
+  name     = "app-layer"
+}
+`,
+	}
+
+	m := &Migration{
+		Name:  "test/remove_resource",
+		Match: Match{BlockType: "resource", Label: "aws_opsworks_stack"},
+		Actions: []Action{
+			{Action: "remove_resource", Text: "FIXME: aws_opsworks_stack has been removed. Update references manually."},
+		},
+	}
+
+	got := executeMigrationMultiFile(t, m, files)
+
+	// Resource should be removed from main.tf
+	if strings.Contains(got["main.tf"], "aws_opsworks_stack") {
+		t.Errorf("expected aws_opsworks_stack removed from main.tf, got:\n%s", got["main.tf"])
+	}
+	// aws_instance should still be there
+	if !strings.Contains(got["main.tf"], "aws_instance") {
+		t.Errorf("expected aws_instance preserved in main.tf, got:\n%s", got["main.tf"])
+	}
+	// refs.tf should have FIXME comment
+	if !strings.Contains(got["refs.tf"], "# FIXME: aws_opsworks_stack has been removed") {
+		t.Errorf("expected FIXME comment in refs.tf, got:\n%s", got["refs.tf"])
+	}
+}
+
+// executeMigrationMultiFile is a test helper for multi-file migrations.
+func executeMigrationMultiFile(t *testing.T, m *Migration, files map[string]string) map[string]string {
+	t.Helper()
+	var astFiles []*ast.File
+	for name, content := range files {
+		f, err := ast.ParseFile([]byte(content), name, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		astFiles = append(astFiles, f)
+	}
+	mod := ast.NewModule(astFiles, "", true, nil)
+	if err := Execute(m, mod); err != nil {
+		t.Fatal(err)
+	}
+	result := make(map[string]string)
+	for name, content := range mod.Bytes() {
+		result[name] = string(content)
+	}
+	return result
+}
+
 // executeMigration is a test helper that parses HCL, runs a migration, and returns the result.
 func executeMigration(t *testing.T, m *Migration, src string) string {
 	t.Helper()
