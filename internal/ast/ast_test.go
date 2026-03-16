@@ -1186,6 +1186,122 @@ func TestBlock_GetAttributeExpression(t *testing.T) {
 	}
 }
 
+func TestBlock_Attributes(t *testing.T) {
+	src := `resource "test" "example" {
+  ami           = "abc-123"
+  instance_type = "t2.micro"
+}
+`
+	f, err := ParseFile([]byte(src), "test.tf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := f.FindBlocks("resource", "test")
+	b := blocks[0]
+
+	attrs := b.Attributes()
+	if len(attrs) != 2 {
+		t.Fatalf("expected 2 attributes, got %d", len(attrs))
+	}
+	if attrs["ami"] == nil {
+		t.Error("expected ami attribute")
+	}
+	if attrs["instance_type"] == nil {
+		t.Error("expected instance_type attribute")
+	}
+
+	// Verify we can read the expression tokens
+	amiTokens := string(attrs["ami"].BuildTokens(nil).Bytes())
+	if !strings.Contains(amiTokens, `"abc-123"`) {
+		t.Errorf("expected ami tokens to contain abc-123, got %q", amiTokens)
+	}
+}
+
+func TestBlock_Attributes_empty(t *testing.T) {
+	src := `resource "test" "example" {
+}
+`
+	f, err := ParseFile([]byte(src), "test.tf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := f.FindBlocks("resource", "test")
+	attrs := blocks[0].Attributes()
+	if len(attrs) != 0 {
+		t.Fatalf("expected 0 attributes, got %d", len(attrs))
+	}
+}
+
+func TestBlock_SetAttributeTraversal(t *testing.T) {
+	src := `resource "test" "example" {
+  name = "hello"
+}
+`
+	f, err := ParseFile([]byte(src), "test.tf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := f.FindBlocks("resource", "test")
+	blocks[0].SetAttributeTraversal("bucket", hcl.Traversal{
+		hcl.TraverseRoot{Name: "aws_s3_bucket"},
+		hcl.TraverseAttr{Name: "main"},
+		hcl.TraverseAttr{Name: "id"},
+	})
+
+	got := string(f.Bytes())
+	if !strings.Contains(got, "bucket = aws_s3_bucket.main.id") {
+		t.Errorf("expected traversal attribute, got:\n%s", got)
+	}
+}
+
+func TestFile_ReferencesPrefix(t *testing.T) {
+	src := `resource "aws_instance" "web" {
+  ami    = "abc-123"
+  bucket = aws_s3_bucket.main.id
+}
+
+output "id" {
+  value = aws_instance.web.id
+}
+`
+	f, err := ParseFile([]byte(src), "test.tf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should find references to aws_s3_bucket
+	if !f.ReferencesPrefix(makeTraversal("aws_s3_bucket")) {
+		t.Error("expected to find reference to aws_s3_bucket")
+	}
+
+	// Should find references to aws_instance
+	if !f.ReferencesPrefix(makeTraversal("aws_instance")) {
+		t.Error("expected to find reference to aws_instance")
+	}
+
+	// Should not find references to nonexistent
+	if f.ReferencesPrefix(makeTraversal("nonexistent")) {
+		t.Error("expected no reference to nonexistent")
+	}
+}
+
+func TestFile_ReferencesPrefix_nested(t *testing.T) {
+	src := `resource "test" "example" {
+  inner {
+    ref = some_resource.main.id
+  }
+}
+`
+	f, err := ParseFile([]byte(src), "test.tf", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !f.ReferencesPrefix(makeTraversal("some_resource")) {
+		t.Error("expected to find reference in nested block")
+	}
+}
+
 func TestFile_RenameReferencePrefix(t *testing.T) {
 	tests := map[string]struct {
 		input string

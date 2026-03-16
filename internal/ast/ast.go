@@ -132,6 +132,22 @@ func (b *Block) GetAttributeExpression(name string) *hclwrite.Expression {
 	return attr.Expr()
 }
 
+// Attributes returns all attribute names mapped to their expressions.
+// This is useful for reading block content before copying or moving it.
+func (b *Block) Attributes() map[string]*hclwrite.Expression {
+	result := make(map[string]*hclwrite.Expression)
+	for name, attr := range b.block.Body().Attributes() {
+		result[name] = attr.Expr()
+	}
+	return result
+}
+
+// SetAttributeTraversal sets (or creates) an attribute with a traversal expression.
+// For example, SetAttributeTraversal("bucket", traversal) produces bucket = aws_s3_bucket.main.id.
+func (b *Block) SetAttributeTraversal(name string, traversal hcl.Traversal) {
+	b.block.Body().SetAttributeTraversal(name, traversal)
+}
+
 // RenameAttribute renames an attribute from "from" to "to" within the block.
 // Returns true if the attribute was found and renamed, false otherwise.
 func (b *Block) RenameAttribute(from, to string) bool {
@@ -250,6 +266,50 @@ func (f *File) AddBlock(blockType string, labels []string) *Block {
 // every block and attribute in the entire file.
 func (f *File) RenameReferencePrefix(old, new hcl.Traversal) {
 	renameReferencesInBody(f.file.Body(), traversalToNames(old), traversalToNames(new))
+}
+
+// ReferencesPrefix returns true if any expression in the file references
+// a variable starting with the given traversal prefix.
+func (f *File) ReferencesPrefix(prefix hcl.Traversal) bool {
+	return bodyReferencesPrefix(f.file.Body(), traversalToNames(prefix))
+}
+
+// bodyReferencesPrefix checks if any expression in a body or its nested
+// blocks references a variable starting with the given prefix names.
+func bodyReferencesPrefix(body *hclwrite.Body, prefix []string) bool {
+	for _, attr := range body.Attributes() {
+		for _, trav := range attr.Expr().Variables() {
+			if traversalMatchesPrefix(trav, prefix) {
+				return true
+			}
+		}
+	}
+	for _, block := range body.Blocks() {
+		if bodyReferencesPrefix(block.Body(), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// traversalMatchesPrefix checks if a traversal's leading names match the prefix.
+func traversalMatchesPrefix(trav *hclwrite.Traversal, prefix []string) bool {
+	tokens := trav.BuildTokens(nil)
+	var names []string
+	for _, tok := range tokens {
+		if tok.Type == hclsyntax.TokenIdent {
+			names = append(names, string(tok.Bytes))
+		}
+	}
+	if len(names) < len(prefix) {
+		return false
+	}
+	for i, p := range prefix {
+		if names[i] != p {
+			return false
+		}
+	}
+	return true
 }
 
 // AppendComment appends a line comment to the end of the file body.
