@@ -50,6 +50,11 @@ func (m *Module) Editable() bool {
 	return m.editable
 }
 
+// Files returns all files in this module.
+func (m *Module) Files() []*File {
+	return m.files
+}
+
 // FindBlocks searches all files in this module for blocks matching
 // blockType and firstLabel. If firstLabel is empty, matches blocks
 // with no labels (e.g., terraform {}).

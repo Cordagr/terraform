@@ -42,6 +42,11 @@ func ParseFile(src []byte, filename string, schemas *providers.ProviderSchema) (
 	}, nil
 }
 
+// Filename returns the filename this file was parsed from.
+func (f *File) Filename() string {
+	return f.filename
+}
+
 // Bytes returns the current content of the file, reflecting any
 // mutations that have been applied.
 func (f *File) Bytes() []byte {
