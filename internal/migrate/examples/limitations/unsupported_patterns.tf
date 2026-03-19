@@ -145,8 +145,12 @@ resource "aws_wafv2_web_acl" "example" {
   name  = "my-acl"
   scope = "REGIONAL"
 
-  # replace_value can fix: enable_machine_learning = true → false
+  # replace_value can fix this literal: true → false
+  enable_machine_learning = true
+
   # But this conditional can't be pattern-matched:
+  cloudwatch_metrics_enabled = var.enable_metrics ? true : false
+
   visibility_config {
     sampled_requests_enabled   = true
     cloudwatch_metrics_enabled = true
