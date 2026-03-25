@@ -24,7 +24,6 @@ func (c *WorkspaceListCommand) Run(rawArgs []string) int {
 	var diags tfdiags.Diagnostics
 
 	rawArgs = c.Meta.process(rawArgs)
-	envCommandShowWarning(c.Ui, c.LegacyName)
 
 	args, diags := arguments.ParseWorkspace(rawArgs)
 
