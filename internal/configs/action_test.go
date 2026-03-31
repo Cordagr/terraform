@@ -248,6 +248,7 @@ func TestDecodeActionTriggerBlock(t *testing.T) {
 					{
 						fooActionExpr,
 						fooActionExpr.Range(),
+						fooConfigAction,
 					},
 				},
 			},
@@ -273,6 +274,7 @@ func TestDecodeActionTriggerBlock(t *testing.T) {
 					{
 						fooActionExpr,
 						fooActionExpr.Range(),
+						fooConfigAction,
 					},
 				},
 			},
@@ -298,6 +300,7 @@ func TestDecodeActionTriggerBlock(t *testing.T) {
 					{
 						fooActionExpr,
 						fooActionExpr.Range(),
+						fooConfigAction,
 					},
 				},
 			},
