@@ -6,9 +6,11 @@ package command
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -17,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/backend/backendrun"
 	"github.com/hashicorp/terraform/internal/command/arguments"
 	"github.com/hashicorp/terraform/internal/configs"
@@ -312,6 +315,24 @@ func (m *Meta) installModules(ctx context.Context, rootDir, testsDir string, upg
 		})
 	}
 	inst := initwd.NewModuleInstaller(m.modulesDir(), loader, m.registryClient(), initializer)
+	inst.SetMinimumVersionAge(m.MinimumVersionAge)
+	if len(m.MinimumVersionAgeExcludeModules) > 0 {
+		excluded := make(map[addrs.ModuleRegistryPackage]struct{}, len(m.MinimumVersionAgeExcludeModules))
+		for _, raw := range m.MinimumVersionAgeExcludeModules {
+			moduleSource, err := addrs.ParseModuleSource(strings.TrimSpace(raw))
+			if err != nil {
+				log.Printf("[WARN] Ignoring invalid minimum_version_age_exclude_modules entry %q: %s", raw, err)
+				continue
+			}
+			registrySource, ok := moduleSource.(addrs.ModuleSourceRegistry)
+			if !ok {
+				log.Printf("[WARN] Ignoring non-registry minimum_version_age_exclude_modules entry %q", raw)
+				continue
+			}
+			excluded[registrySource.Package] = struct{}{}
+		}
+		inst.SetMinimumVersionAgeExcludes(excluded)
+	}
 
 	_, moreDiags := inst.InstallModules(ctx, rootDir, testsDir, upgrade, installErrsOnly, hooks)
 	diags = diags.Append(moreDiags)

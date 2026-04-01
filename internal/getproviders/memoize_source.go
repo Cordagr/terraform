@@ -6,6 +6,7 @@ package getproviders
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/terraform/internal/addrs"
 )
@@ -24,6 +25,7 @@ import (
 type MemoizeSource struct {
 	underlying        Source
 	availableVersions map[addrs.Provider]memoizeAvailableVersionsRet
+	versionTimestamps map[memoizeVersionTimestampCall]memoizeVersionTimestampRet
 	packageMetas      map[memoizePackageMetaCall]memoizePackageMetaRet
 	mu                sync.Mutex
 }
@@ -32,6 +34,16 @@ type memoizeAvailableVersionsRet struct {
 	VersionList VersionList
 	Warnings    Warnings
 	Err         error
+}
+
+type memoizeVersionTimestampCall struct {
+	Provider addrs.Provider
+	Version  Version
+}
+
+type memoizeVersionTimestampRet struct {
+	Timestamp *time.Time
+	Err       error
 }
 
 type memoizePackageMetaCall struct {
@@ -53,6 +65,7 @@ func NewMemoizeSource(underlying Source) *MemoizeSource {
 	return &MemoizeSource{
 		underlying:        underlying,
 		availableVersions: make(map[addrs.Provider]memoizeAvailableVersionsRet),
+		versionTimestamps: make(map[memoizeVersionTimestampCall]memoizeVersionTimestampRet),
 		packageMetas:      make(map[memoizePackageMetaCall]memoizePackageMetaRet),
 	}
 }
@@ -75,6 +88,35 @@ func (s *MemoizeSource) AvailableVersions(ctx context.Context, provider addrs.Pr
 		Warnings:    warnings,
 	}
 	return ret, warnings, err
+}
+
+// VersionTimestamp requests the version timestamp from the underlying source
+// and caches it before returning it, or on subsequent calls returns the result
+// directly from the cache.
+func (s *MemoizeSource) VersionTimestamp(ctx context.Context, provider addrs.Provider, version Version) (*time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	call := memoizeVersionTimestampCall{
+		Provider: provider,
+		Version:  version,
+	}
+	if existing, exists := s.versionTimestamps[call]; exists {
+		return existing.Timestamp, existing.Err
+	}
+
+	timed, ok := s.underlying.(VersionTimestampSource)
+	if !ok {
+		s.versionTimestamps[call] = memoizeVersionTimestampRet{}
+		return nil, nil
+	}
+
+	ret, err := timed.VersionTimestamp(ctx, provider, version)
+	s.versionTimestamps[call] = memoizeVersionTimestampRet{
+		Timestamp: ret,
+		Err:       err,
+	}
+	return ret, err
 }
 
 // PackageMeta requests package metadata from the underlying source and caches

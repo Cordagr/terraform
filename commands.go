@@ -102,6 +102,9 @@ func initCommands(
 		PluginCacheDir:      config.PluginCacheDir,
 
 		PluginCacheMayBreakDependencyLockFile: config.PluginCacheMayBreakDependencyLockFile,
+		MinimumVersionAge:                     config.MinimumVersionAge,
+		MinimumVersionAgeExcludeProviders:     config.MinimumVersionAgeExcludeProviders,
+		MinimumVersionAgeExcludeModules:       config.MinimumVersionAgeExcludeModules,
 
 		ShutdownCh:    makeShutdownCh(),
 		CallerContext: ctx,

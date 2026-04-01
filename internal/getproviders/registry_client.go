@@ -96,24 +96,24 @@ func newRegistryClient(baseURL *url.URL, creds svcauth.HostCredentials) *registr
 // 404 Not Found to indicate that the namespace or provider type are not known,
 // ErrUnauthorized if the registry responds with 401 or 403 status codes, or
 // ErrQueryFailed for any other protocol or operational problem.
-func (c *registryClient) ProviderVersions(ctx context.Context, addr addrs.Provider) (map[string][]string, []string, error) {
+func (c *registryClient) ProviderVersions(ctx context.Context, addr addrs.Provider) (map[string][]string, map[string]*time.Time, []string, error) {
 	endpointPath, err := url.Parse(path.Join(addr.Namespace, addr.Type, "versions"))
 	if err != nil {
 		// Should never happen because we're constructing this from
 		// already-validated components.
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	endpointURL := c.baseURL.ResolveReference(endpointPath)
 	req, err := retryablehttp.NewRequest("GET", endpointURL.String(), nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	req = req.WithContext(ctx)
 	c.addHeadersToRequest(req.Request)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, c.errQueryFailed(addr, err)
+		return nil, nil, nil, c.errQueryFailed(addr, err)
 	}
 	defer resp.Body.Close()
 
@@ -121,13 +121,13 @@ func (c *registryClient) ProviderVersions(ctx context.Context, addr addrs.Provid
 	case http.StatusOK:
 		// Great!
 	case http.StatusNotFound:
-		return nil, nil, ErrRegistryProviderNotKnown{
+		return nil, nil, nil, ErrRegistryProviderNotKnown{
 			Provider: addr,
 		}
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, nil, c.errUnauthorized(addr.Hostname)
+		return nil, nil, nil, c.errUnauthorized(addr.Hostname)
 	default:
-		return nil, nil, c.errQueryFailed(addr, errors.New(resp.Status))
+		return nil, nil, nil, c.errQueryFailed(addr, errors.New(resp.Status))
 	}
 
 	// We ignore the platforms portion of the response body, because the
@@ -135,8 +135,9 @@ func (c *registryClient) ProviderVersions(ctx context.Context, addr addrs.Provid
 	// versions' metadata.
 	type ResponseBody struct {
 		Versions []struct {
-			Version   string   `json:"version"`
-			Protocols []string `json:"protocols"`
+			Version     string     `json:"version"`
+			Protocols   []string   `json:"protocols"`
+			PublishedAt *time.Time `json:"published_at,omitempty"`
 		} `json:"versions"`
 		Warnings []string `json:"warnings"`
 	}
@@ -144,19 +145,21 @@ func (c *registryClient) ProviderVersions(ctx context.Context, addr addrs.Provid
 
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&body); err != nil {
-		return nil, nil, c.errQueryFailed(addr, err)
+		return nil, nil, nil, c.errQueryFailed(addr, err)
 	}
 
 	if len(body.Versions) == 0 {
-		return nil, body.Warnings, nil
+		return nil, nil, body.Warnings, nil
 	}
 
-	ret := make(map[string][]string, len(body.Versions))
+	protocols := make(map[string][]string, len(body.Versions))
+	timestamps := make(map[string]*time.Time, len(body.Versions))
 	for _, v := range body.Versions {
-		ret[v.Version] = v.Protocols
+		protocols[v.Version] = v.Protocols
+		timestamps[v.Version] = v.PublishedAt // nil if not provided by registry
 	}
 
-	return ret, body.Warnings, nil
+	return protocols, timestamps, body.Warnings, nil
 }
 
 // PackageMeta returns metadata about a distribution package for a provider.
@@ -366,7 +369,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 // findClosestProtocolCompatibleVersion searches for the provider version with the closest protocol match.
 func (c *registryClient) findClosestProtocolCompatibleVersion(ctx context.Context, provider addrs.Provider, version Version) (Version, error) {
 	var match Version
-	available, _, err := c.ProviderVersions(ctx, provider)
+	available, _, _, err := c.ProviderVersions(ctx, provider)
 	if err != nil {
 		return UnspecifiedVersion, err
 	}

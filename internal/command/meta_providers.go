@@ -79,6 +79,19 @@ func (m *Meta) providerInstallerCustomSource(source getproviders.Source) *provid
 		unmanagedProviderTypes[ty] = struct{}{}
 	}
 	inst.SetUnmanagedProviderTypes(unmanagedProviderTypes)
+	inst.SetMinimumVersionAge(m.MinimumVersionAge)
+	if len(m.MinimumVersionAgeExcludeProviders) > 0 {
+		excluded := make(map[addrs.Provider]struct{}, len(m.MinimumVersionAgeExcludeProviders))
+		for _, raw := range m.MinimumVersionAgeExcludeProviders {
+			provider, diags := addrs.ParseProviderSourceString(strings.TrimSpace(raw))
+			if diags.HasErrors() {
+				log.Printf("[WARN] Ignoring invalid minimum_version_age_exclude_providers entry %q", raw)
+				continue
+			}
+			excluded[provider] = struct{}{}
+		}
+		inst.SetMinimumVersionAgeExcludes(excluded)
+	}
 	return inst
 }
 

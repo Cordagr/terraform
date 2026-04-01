@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/apparentlymart/go-versions/versions"
 	version "github.com/hashicorp/go-version"
@@ -37,6 +38,9 @@ type ModuleInstaller struct {
 	loader  *configload.Loader
 	reg     *registry.Client
 
+	minVersionAge         time.Duration
+	minVersionAgeExcludes map[addrs.ModuleRegistryPackage]struct{}
+
 	// The keys in moduleVersions are resolved and trimmed registry source
 	// addresses and the values are the registry response.
 	registryPackageVersions map[addrs.ModuleRegistryPackage]*response.ModuleVersions
@@ -58,10 +62,53 @@ func NewModuleInstaller(modsDir string, loader *configload.Loader, reg *registry
 		modsDir:                 modsDir,
 		loader:                  loader,
 		reg:                     reg,
+		minVersionAgeExcludes:   make(map[addrs.ModuleRegistryPackage]struct{}),
 		registryPackageVersions: make(map[addrs.ModuleRegistryPackage]*response.ModuleVersions),
 		registryPackageSources:  make(map[moduleVersion]addrs.ModuleSourceRemote),
 		initializer:             initializer,
 	}
+}
+
+func moduleConstraintIsExact(raw string) bool {
+	constraints := strings.Split(raw, ",")
+	if len(constraints) != 1 {
+		return false
+	}
+
+	constraint := strings.TrimSpace(constraints[0])
+	if constraint == "" {
+		return false
+	}
+
+	if strings.HasPrefix(constraint, "=") {
+		constraint = strings.TrimSpace(strings.TrimPrefix(constraint, "="))
+	}
+
+	if constraint == "" {
+		return false
+	}
+
+	operators := []string{"~>", ">=", "<=", "!=", ">", "<"}
+	for _, op := range operators {
+		if strings.Contains(constraint, op) {
+			return false
+		}
+	}
+
+	_, err := version.NewVersion(constraint)
+	return err == nil
+}
+
+// SetMinimumVersionAge configures a minimum publish age required for module
+// versions to be considered during installation.
+func (i *ModuleInstaller) SetMinimumVersionAge(age time.Duration) {
+	i.minVersionAge = age
+}
+
+// SetMinimumVersionAgeExcludes configures module packages that should bypass
+// minimum publish age filtering.
+func (i *ModuleInstaller) SetMinimumVersionAgeExcludes(modules map[addrs.ModuleRegistryPackage]struct{}) {
+	i.minVersionAgeExcludes = modules
 }
 
 // InstallModules analyses the root module in the given directory and installs
@@ -564,6 +611,16 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		}
 
 		if req.VersionConstraint.Required.Check(v) {
+			if i.minVersionAge > 0 {
+				if _, excluded := i.minVersionAgeExcludes[packageAddr]; !excluded {
+					if mv.PublishedAt != nil && !moduleConstraintIsExact(req.VersionConstraint.Required.String()) {
+						minTimestamp := time.Now().Add(-i.minVersionAge)
+						if mv.PublishedAt.After(minTimestamp) {
+							continue
+						}
+					}
+				}
+			}
 			if latestMatch == nil || v.GreaterThan(latestMatch) {
 				latestMatch = v
 			}

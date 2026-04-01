@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/apparentlymart/go-versions/versions"
 
@@ -58,6 +59,14 @@ type Installer struct {
 	// lifecycle for, and therefore does not need to worry about the
 	// installation of.
 	unmanagedProviderTypes map[addrs.Provider]struct{}
+
+	// minVersionAge, when non-zero, excludes provider versions published more
+	// recently than now-minVersionAge during version selection.
+	minVersionAge time.Duration
+
+	// minVersionAgeExcludes identifies providers that should bypass
+	// minVersionAge filtering.
+	minVersionAgeExcludes map[addrs.Provider]struct{}
 }
 
 // NewInstaller constructs and returns a new installer with the given target
@@ -159,6 +168,18 @@ func (i *Installer) SetBuiltInProviderTypes(types []string) {
 // or versioning of these binaries.
 func (i *Installer) SetUnmanagedProviderTypes(types map[addrs.Provider]struct{}) {
 	i.unmanagedProviderTypes = types
+}
+
+// SetMinimumVersionAge configures a minimum publish age required for provider
+// versions to be considered during installation.
+func (i *Installer) SetMinimumVersionAge(age time.Duration) {
+	i.minVersionAge = age
+}
+
+// SetMinimumVersionAgeExcludes configures providers that should bypass the
+// minimum publish age filter.
+func (i *Installer) SetMinimumVersionAgeExcludes(providers map[addrs.Provider]struct{}) {
+	i.minVersionAgeExcludes = providers
 }
 
 // EnsureProviderVersions compares the given provider requirements with what
@@ -304,15 +325,41 @@ NeedProvider:
 				cb(provider, warnings)
 			}
 		}
-		available.Sort()                           // put the versions in increasing order of precedence
-		for i := len(available) - 1; i >= 0; i-- { // walk backwards to consider newer versions first
-			if acceptableVersions.Has(available[i]) {
-				need[provider] = available[i]
-				if cb := evts.QueryPackagesSuccess; cb != nil {
-					cb(provider, available[i])
-				}
-				continue NeedProvider
+		available.Sort()                                                      // put the versions in increasing order of precedence
+		for versionIdx := len(available) - 1; versionIdx >= 0; versionIdx-- { // walk backwards to consider newer versions first
+			candidate := available[versionIdx]
+			if !acceptableVersions.Has(candidate) {
+				continue
 			}
+
+			if i.minVersionAge > 0 {
+				if _, excluded := i.minVersionAgeExcludes[provider]; !excluded {
+					timed, ok := i.source.(getproviders.VersionTimestampSource)
+					if ok {
+						timestamp, err := timed.VersionTimestamp(ctx, provider, candidate)
+						if err != nil {
+							err = fmt.Errorf("failed to query publish timestamp for %s %s: %w", provider, candidate, err)
+							errs[provider] = err
+							if cb := evts.QueryPackagesFailure; cb != nil {
+								cb(provider, err)
+							}
+							continue NeedProvider
+						}
+						if timestamp != nil {
+							minTimestamp := time.Now().Add(-i.minVersionAge)
+							if timestamp.After(minTimestamp) {
+								continue
+							}
+						}
+					}
+				}
+			}
+
+			need[provider] = candidate
+			if cb := evts.QueryPackagesSuccess; cb != nil {
+				cb(provider, candidate)
+			}
+			continue NeedProvider
 		}
 		// If we get here then the source has no packages that meet the given
 		// version constraint, which we model as a query error.

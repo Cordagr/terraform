@@ -352,7 +352,7 @@ func TestProviderVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			gotVersions, _, err := client.ProviderVersions(context.Background(), test.provider)
+			gotVersions, _, _, err := client.ProviderVersions(context.Background(), test.provider)
 
 			if err != nil {
 				if test.wantErr == "" {

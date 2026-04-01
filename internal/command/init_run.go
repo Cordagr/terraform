@@ -34,6 +34,9 @@ func (c *InitCommand) run(initArgs *arguments.Init, view views.Init) int {
 	c.Meta.input = initArgs.InputEnabled
 	c.Meta.targetFlags = initArgs.TargetFlags
 	c.Meta.compactWarnings = initArgs.CompactWarnings
+	if initArgs.MinimumVersionAgeSet {
+		c.Meta.MinimumVersionAge = initArgs.MinimumVersionAge
+	}
 
 	// Copying the state only happens during backend migration, so setting
 	// -force-copy implies -migrate-state

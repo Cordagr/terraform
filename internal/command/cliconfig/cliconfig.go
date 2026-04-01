@@ -20,7 +20,9 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/hcl"
 
@@ -30,6 +32,9 @@ import (
 
 const pluginCacheDirEnvVar = "TF_PLUGIN_CACHE_DIR"
 const pluginCacheMayBreakLockFileEnvVar = "TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE"
+const minVersionAgeEnvVar = "TF_MINIMUM_VERSION_AGE"
+const minVersionAgeExcludeProvidersEnvVar = "TF_MINIMUM_VERSION_AGE_EXCLUDE_PROVIDERS"
+const minVersionAgeExcludeModulesEnvVar = "TF_MINIMUM_VERSION_AGE_EXCLUDE_MODULES"
 
 // Config is the structure of the configuration for the Terraform CLI.
 //
@@ -56,6 +61,18 @@ type Config struct {
 	// would prefer to have the plugin cache dir's behavior to take priority
 	// over the requirements of the dependency lock file.
 	PluginCacheMayBreakDependencyLockFile bool `hcl:"plugin_cache_may_break_dependency_lock_file"`
+
+	// MinimumVersionAge excludes newly-published versions younger than this
+	// duration when selecting upgrade candidates.
+	MinimumVersionAge time.Duration `hcl:"minimum_version_age"`
+
+	// MinimumVersionAgeExcludeProviders lists provider source addresses that
+	// should bypass minimum_version_age filtering.
+	MinimumVersionAgeExcludeProviders []string `hcl:"minimum_version_age_exclude_providers"`
+
+	// MinimumVersionAgeExcludeModules lists registry module package addresses
+	// that should bypass minimum_version_age filtering.
+	MinimumVersionAgeExcludeModules []string `hcl:"minimum_version_age_exclude_modules"`
 
 	Hosts map[string]*ConfigHost `hcl:"host"`
 
@@ -254,6 +271,32 @@ func envConfig(env map[string]string) *Config {
 		config.PluginCacheMayBreakDependencyLockFile = true
 	}
 
+	if envMinAge := env[minVersionAgeEnvVar]; envMinAge != "" {
+		if seconds, err := strconv.ParseInt(envMinAge, 10, 64); err == nil && seconds >= 0 {
+			config.MinimumVersionAge = time.Duration(seconds) * time.Second
+		} else if duration, err := time.ParseDuration(envMinAge); err == nil && duration >= 0 {
+			config.MinimumVersionAge = duration
+		}
+	}
+
+	if envExcludeProviders := env[minVersionAgeExcludeProvidersEnvVar]; envExcludeProviders != "" {
+		for _, item := range strings.Split(envExcludeProviders, ",") {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				config.MinimumVersionAgeExcludeProviders = append(config.MinimumVersionAgeExcludeProviders, item)
+			}
+		}
+	}
+
+	if envExcludeModules := env[minVersionAgeExcludeModulesEnvVar]; envExcludeModules != "" {
+		for _, item := range strings.Split(envExcludeModules, ",") {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				config.MinimumVersionAgeExcludeModules = append(config.MinimumVersionAgeExcludeModules, item)
+			}
+		}
+	}
+
 	return config
 }
 
@@ -333,6 +376,12 @@ func (c *Config) Validate() tfdiags.Diagnostics {
 		}
 	}
 
+	if c.MinimumVersionAge < 0 {
+		diags = diags.Append(
+			fmt.Errorf("minimum_version_age must not be negative"),
+		)
+	}
+
 	return diags
 }
 
@@ -368,6 +417,25 @@ func (c *Config) Merge(c2 *Config) *Config {
 		// This setting saturates to "on"; once either configuration sets it,
 		// there is no way to override it back to off again.
 		result.PluginCacheMayBreakDependencyLockFile = true
+	}
+
+	result.MinimumVersionAge = c.MinimumVersionAge
+	if result.MinimumVersionAge == 0 {
+		result.MinimumVersionAge = c2.MinimumVersionAge
+	}
+
+	if len(c.MinimumVersionAgeExcludeProviders) > 0 {
+		result.MinimumVersionAgeExcludeProviders = append(result.MinimumVersionAgeExcludeProviders, c.MinimumVersionAgeExcludeProviders...)
+	}
+	if len(c2.MinimumVersionAgeExcludeProviders) > 0 {
+		result.MinimumVersionAgeExcludeProviders = append(result.MinimumVersionAgeExcludeProviders, c2.MinimumVersionAgeExcludeProviders...)
+	}
+
+	if len(c.MinimumVersionAgeExcludeModules) > 0 {
+		result.MinimumVersionAgeExcludeModules = append(result.MinimumVersionAgeExcludeModules, c.MinimumVersionAgeExcludeModules...)
+	}
+	if len(c2.MinimumVersionAgeExcludeModules) > 0 {
+		result.MinimumVersionAgeExcludeModules = append(result.MinimumVersionAgeExcludeModules, c2.MinimumVersionAgeExcludeModules...)
 	}
 
 	if (len(c.Hosts) + len(c2.Hosts)) > 0 {

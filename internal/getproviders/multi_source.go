@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	svchost "github.com/hashicorp/terraform-svchost"
 
@@ -111,6 +112,33 @@ func (s MultiSource) PackageMeta(ctx context.Context, provider addrs.Provider, v
 		Version:  version,
 		Platform: target,
 	}
+}
+
+// VersionTimestamp retrieves the publish timestamp for a provider version from
+// the first matching source that can report timestamps.
+func (s MultiSource) VersionTimestamp(ctx context.Context, provider addrs.Provider, version Version) (*time.Time, error) {
+	for _, selector := range s {
+		if !selector.CanHandleProvider(provider) {
+			continue
+		}
+
+		timed, ok := selector.Source.(VersionTimestampSource)
+		if !ok {
+			continue
+		}
+
+		timestamp, err := timed.VersionTimestamp(ctx, provider, version)
+		switch err.(type) {
+		case nil:
+			return timestamp, nil
+		case ErrProviderNotFound, ErrRegistryProviderNotKnown, ErrPlatformNotSupported:
+			continue
+		default:
+			return nil, err
+		}
+	}
+
+	return nil, nil
 }
 
 // MultiSourceSelector is an element of the source selection configuration on

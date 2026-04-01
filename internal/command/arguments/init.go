@@ -53,6 +53,14 @@ type Init struct {
 	// Upgrade specifies whether to upgrade modules and plugins as part of their respective installation steps
 	Upgrade bool
 
+	// MinimumVersionAge optionally overrides configured minimum version age
+	// filtering for this init invocation.
+	MinimumVersionAge time.Duration
+
+	// MinimumVersionAgeSet reports whether -minimum-version-age was explicitly
+	// set on the CLI.
+	MinimumVersionAgeSet bool
+
 	// Json specifies whether to output in JSON format
 	Json bool
 
@@ -106,6 +114,7 @@ func ParseInit(args []string, experimentsEnabled bool) (*Init, tfdiags.Diagnosti
 	cmdFlags.BoolVar(&init.Reconfigure, "reconfigure", false, "reconfigure")
 	cmdFlags.BoolVar(&init.MigrateState, "migrate-state", false, "migrate state")
 	cmdFlags.BoolVar(&init.Upgrade, "upgrade", false, "")
+	cmdFlags.DurationVar(&init.MinimumVersionAge, "minimum-version-age", 0, "minimum age required for upgrade candidate versions")
 	cmdFlags.StringVar(&init.Lockfile, "lockfile", "", "Set a dependency lockfile mode")
 	cmdFlags.BoolVar(&init.IgnoreRemoteVersion, "ignore-remote-version", false, "continue even if remote and local Terraform versions are incompatible")
 	cmdFlags.StringVar(&init.TestsDirectory, "test-directory", "tests", "test-directory")
@@ -152,6 +161,15 @@ func ParseInit(args []string, experimentsEnabled bool) (*Init, tfdiags.Diagnosti
 			tfdiags.Error,
 			"Invalid init options",
 			"The -migrate-state and -reconfigure options are mutually-exclusive.",
+		))
+	}
+
+	init.MinimumVersionAgeSet = FlagIsSet(cmdFlags, "minimum-version-age")
+	if init.MinimumVersionAgeSet && init.MinimumVersionAge < 0 {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Invalid init options",
+			"The -minimum-version-age option must not be negative.",
 		))
 	}
 

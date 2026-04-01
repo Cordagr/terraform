@@ -3,6 +3,8 @@
 
 package response
 
+import "time"
+
 // ModuleVersions is the response format that contains all metadata about module
 // versions needed for terraform CLI to resolve version constraints. See RFC
 // TF-042 for details on this format.
@@ -20,9 +22,10 @@ type ModuleProviderVersions struct {
 // ModuleVersion is the output metadata for a given version needed by CLI to
 // resolve candidate versions to satisfy requirements.
 type ModuleVersion struct {
-	Version    string              `json:"version"`
-	Root       VersionSubmodule    `json:"root"`
-	Submodules []*VersionSubmodule `json:"submodules"`
+	Version     string              `json:"version"`
+	PublishedAt *time.Time          `json:"published_at,omitempty"`
+	Root        VersionSubmodule    `json:"root"`
+	Submodules  []*VersionSubmodule `json:"submodules"`
 }
 
 // VersionSubmodule is the output metadata for a submodule within a given

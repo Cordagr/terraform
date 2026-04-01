@@ -130,6 +130,18 @@ type Meta struct {
 	// longer any compelling reasons for folks to not lock their dependencies.
 	PluginCacheMayBreakDependencyLockFile bool
 
+	// MinimumVersionAge excludes newly-published provider and module versions
+	// younger than this duration during upgrade selection.
+	MinimumVersionAge time.Duration
+
+	// MinimumVersionAgeExcludeProviders contains provider source addresses that
+	// bypass minimum version age filtering.
+	MinimumVersionAgeExcludeProviders []string
+
+	// MinimumVersionAgeExcludeModules contains registry module package addresses
+	// that bypass minimum version age filtering.
+	MinimumVersionAgeExcludeModules []string
+
 	// ProviderSource allows determining the available versions of a provider
 	// and determines where a distribution package for a particular
 	// provider version can be obtained.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	svchost "github.com/hashicorp/terraform-svchost"
 	disco "github.com/hashicorp/terraform-svchost/disco"
@@ -43,7 +44,7 @@ func (s *RegistrySource) AvailableVersions(ctx context.Context, provider addrs.P
 		return nil, nil, err
 	}
 
-	versionsResponse, warnings, err := client.ProviderVersions(ctx, provider)
+	versionsResponse, _, warnings, err := client.ProviderVersions(ctx, provider)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -76,6 +77,22 @@ func (s *RegistrySource) AvailableVersions(ctx context.Context, provider addrs.P
 	}
 	ret.Sort() // lowest precedence first, preserving order when equal precedence
 	return ret, warnings, nil
+}
+
+// VersionTimestamp returns the publish timestamp for a provider version, if
+// the underlying registry reports it.
+func (s *RegistrySource) VersionTimestamp(ctx context.Context, provider addrs.Provider, version Version) (*time.Time, error) {
+	client, err := s.registryClient(provider.Hostname)
+	if err != nil {
+		return nil, err
+	}
+
+	_, timestamps, _, err := client.ProviderVersions(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+
+	return timestamps[version.String()], nil
 }
 
 // PackageMeta returns metadata about the location and capabilities of
