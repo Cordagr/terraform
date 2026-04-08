@@ -84,7 +84,7 @@ func (v *WorkspaceJSON) List(current string, list []string, diags tfdiags.Diagno
 	jsonOutput, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		// Should never happen because we fully-control the input here
-		panic(err)
+		panic(fmt.Sprintf("failed to marshal workspace list json output: %v", err))
 	}
 
 	v.view.streams.Println(string(jsonOutput))
