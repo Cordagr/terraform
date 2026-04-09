@@ -1,0 +1,5 @@
+kind: NEW FEATURES
+body: Add minimum version age filtering for provider and module upgrades, with configurable exclusions for trusted sources
+time: 2026-04-09T12:00:00.000000-04:00
+custom:
+    Issue: "38304"
