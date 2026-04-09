@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apparentlymart/go-versions/versions"
 	"github.com/apparentlymart/go-versions/versions/constraints"
@@ -2599,6 +2600,120 @@ func TestEnsureProviderVersions_protocol_errors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureProviderVersions_minimumVersionAge_ExactPinsBypassFilter(t *testing.T) {
+	provider := addrs.MustParseProviderSourceString("registry.terraform.io/hashicorp/test")
+	platform := getproviders.CurrentPlatform
+	protocols := getproviders.VersionList{getproviders.MustParseVersion("5.0")}
+
+	pkgOld, closeOld, err := getproviders.FakeInstallablePackageMeta(provider, getproviders.MustParseVersion("1.2.2"), protocols, platform, "")
+	if err != nil {
+		t.Fatalf("failed to create old provider package: %s", err)
+	}
+	defer closeOld()
+
+	pkgNew, closeNew, err := getproviders.FakeInstallablePackageMeta(provider, getproviders.MustParseVersion("1.2.3"), protocols, platform, "")
+	if err != nil {
+		t.Fatalf("failed to create new provider package: %s", err)
+	}
+	defer closeNew()
+
+	now := time.Now()
+	stampSource := &testTimestampedSource{
+		Source: getproviders.NewMockSource([]getproviders.PackageMeta{pkgOld, pkgNew}, nil),
+		timestamps: map[addrs.Provider]map[getproviders.Version]*time.Time{
+			provider: {
+				pkgOld.Version: ptrTime(now.Add(-48 * time.Hour)),
+				pkgNew.Version: ptrTime(now.Add(-2 * time.Hour)),
+			},
+		},
+	}
+
+	targetDir := NewDir(t.TempDir())
+	inst := NewInstaller(targetDir, stampSource)
+	inst.SetMinimumVersionAge(24 * time.Hour)
+
+	reqs := getproviders.Requirements{provider: getproviders.MustParseVersionConstraints("1.2.3")}
+	newLocks, err := inst.EnsureProviderVersions(context.Background(), depsfile.NewLocks(), reqs, InstallUpgrades)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	got := newLocks.Provider(provider)
+	if got == nil {
+		t.Fatalf("missing lock entry for %s", provider)
+	}
+	if got.Version() != getproviders.MustParseVersion("1.2.3") {
+		t.Fatalf("wrong selected version: got %s, want 1.2.3", got.Version())
+	}
+}
+
+func TestEnsureProviderVersions_minimumVersionAge_RangedConstraintsFilterNewer(t *testing.T) {
+	provider := addrs.MustParseProviderSourceString("registry.terraform.io/hashicorp/test")
+	platform := getproviders.CurrentPlatform
+	protocols := getproviders.VersionList{getproviders.MustParseVersion("5.0")}
+
+	pkgOld, closeOld, err := getproviders.FakeInstallablePackageMeta(provider, getproviders.MustParseVersion("1.2.2"), protocols, platform, "")
+	if err != nil {
+		t.Fatalf("failed to create old provider package: %s", err)
+	}
+	defer closeOld()
+
+	pkgNew, closeNew, err := getproviders.FakeInstallablePackageMeta(provider, getproviders.MustParseVersion("1.2.3"), protocols, platform, "")
+	if err != nil {
+		t.Fatalf("failed to create new provider package: %s", err)
+	}
+	defer closeNew()
+
+	now := time.Now()
+	stampSource := &testTimestampedSource{
+		Source: getproviders.NewMockSource([]getproviders.PackageMeta{pkgOld, pkgNew}, nil),
+		timestamps: map[addrs.Provider]map[getproviders.Version]*time.Time{
+			provider: {
+				pkgOld.Version: ptrTime(now.Add(-48 * time.Hour)),
+				pkgNew.Version: ptrTime(now.Add(-2 * time.Hour)),
+			},
+		},
+	}
+
+	targetDir := NewDir(t.TempDir())
+	inst := NewInstaller(targetDir, stampSource)
+	inst.SetMinimumVersionAge(24 * time.Hour)
+
+	reqs := getproviders.Requirements{provider: getproviders.MustParseVersionConstraints("~> 1.2")}
+	newLocks, err := inst.EnsureProviderVersions(context.Background(), depsfile.NewLocks(), reqs, InstallUpgrades)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	got := newLocks.Provider(provider)
+	if got == nil {
+		t.Fatalf("missing lock entry for %s", provider)
+	}
+	if got.Version() != getproviders.MustParseVersion("1.2.2") {
+		t.Fatalf("wrong selected version: got %s, want 1.2.2", got.Version())
+	}
+}
+
+type testTimestampedSource struct {
+	getproviders.Source
+	timestamps map[addrs.Provider]map[getproviders.Version]*time.Time
+}
+
+var _ getproviders.VersionTimestampSource = (*testTimestampedSource)(nil)
+
+func (s *testTimestampedSource) VersionTimestamp(ctx context.Context, provider addrs.Provider, version getproviders.Version) (*time.Time, error) {
+	if byVersion, ok := s.timestamps[provider]; ok {
+		if timestamp, ok := byVersion[version]; ok {
+			return timestamp, nil
+		}
+	}
+	return nil, nil
+}
+
+func ptrTime(v time.Time) *time.Time {
+	return &v
 }
 
 // testServices starts up a local HTTP server running a fake provider registry

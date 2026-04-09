@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
+	"github.com/hashicorp/terraform/internal/getmodules/moduleaddrs"
 	"github.com/hashicorp/terraform/internal/initwd"
 	"github.com/hashicorp/terraform/internal/registry"
 	"github.com/hashicorp/terraform/internal/terraform"
@@ -319,7 +320,7 @@ func (m *Meta) installModules(ctx context.Context, rootDir, testsDir string, upg
 	if len(m.MinimumVersionAgeExcludeModules) > 0 {
 		excluded := make(map[addrs.ModuleRegistryPackage]struct{}, len(m.MinimumVersionAgeExcludeModules))
 		for _, raw := range m.MinimumVersionAgeExcludeModules {
-			moduleSource, err := addrs.ParseModuleSource(strings.TrimSpace(raw))
+			moduleSource, err := moduleaddrs.ParseModuleSource(strings.TrimSpace(raw))
 			if err != nil {
 				log.Printf("[WARN] Ignoring invalid minimum_version_age_exclude_modules entry %q: %s", raw, err)
 				continue

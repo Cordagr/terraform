@@ -182,6 +182,37 @@ func (i *Installer) SetMinimumVersionAgeExcludes(providers map[addrs.Provider]st
 	i.minVersionAgeExcludes = providers
 }
 
+func providerConstraintIsExact(vc getproviders.VersionConstraints) bool {
+	raw := getproviders.VersionConstraintsString(vc)
+	constraints := strings.Split(raw, ",")
+	if len(constraints) != 1 {
+		return false
+	}
+
+	constraint := strings.TrimSpace(constraints[0])
+	if constraint == "" {
+		return false
+	}
+
+	if strings.HasPrefix(constraint, "=") {
+		constraint = strings.TrimSpace(strings.TrimPrefix(constraint, "="))
+	}
+
+	if constraint == "" {
+		return false
+	}
+
+	operators := []string{"~>", ">=", "<=", "!=", ">", "<"}
+	for _, op := range operators {
+		if strings.Contains(constraint, op) {
+			return false
+		}
+	}
+
+	_, err := getproviders.ParseVersion(constraint)
+	return err == nil
+}
+
 // EnsureProviderVersions compares the given provider requirements with what
 // is already available in the installer's target directory and then takes
 // appropriate installation actions to ensure that suitable packages
@@ -325,31 +356,37 @@ NeedProvider:
 				cb(provider, warnings)
 			}
 		}
-		available.Sort()                                                      // put the versions in increasing order of precedence
+		available.Sort() // put the versions in increasing order of precedence
+		applyMinVersionAge := i.minVersionAge > 0
+		if applyMinVersionAge {
+			if _, excluded := i.minVersionAgeExcludes[provider]; excluded {
+				applyMinVersionAge = false
+			} else if providerConstraintIsExact(reqs[provider]) {
+				applyMinVersionAge = false
+			}
+		}
 		for versionIdx := len(available) - 1; versionIdx >= 0; versionIdx-- { // walk backwards to consider newer versions first
 			candidate := available[versionIdx]
 			if !acceptableVersions.Has(candidate) {
 				continue
 			}
 
-			if i.minVersionAge > 0 {
-				if _, excluded := i.minVersionAgeExcludes[provider]; !excluded {
-					timed, ok := i.source.(getproviders.VersionTimestampSource)
-					if ok {
-						timestamp, err := timed.VersionTimestamp(ctx, provider, candidate)
-						if err != nil {
-							err = fmt.Errorf("failed to query publish timestamp for %s %s: %w", provider, candidate, err)
-							errs[provider] = err
-							if cb := evts.QueryPackagesFailure; cb != nil {
-								cb(provider, err)
-							}
-							continue NeedProvider
+			if applyMinVersionAge {
+				timed, ok := i.source.(getproviders.VersionTimestampSource)
+				if ok {
+					timestamp, err := timed.VersionTimestamp(ctx, provider, candidate)
+					if err != nil {
+						err = fmt.Errorf("failed to query publish timestamp for %s %s: %w", provider, candidate, err)
+						errs[provider] = err
+						if cb := evts.QueryPackagesFailure; cb != nil {
+							cb(provider, err)
 						}
-						if timestamp != nil {
-							minTimestamp := time.Now().Add(-i.minVersionAge)
-							if timestamp.After(minTimestamp) {
-								continue
-							}
+						continue NeedProvider
+					}
+					if timestamp != nil {
+						minTimestamp := time.Now().Add(-i.minVersionAge)
+						if timestamp.After(minTimestamp) {
+							continue
 						}
 					}
 				}
